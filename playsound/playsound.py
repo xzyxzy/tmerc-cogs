@@ -11,8 +11,7 @@ from discord.ext import commands
 from .utils.dataIO import dataIO
 from .utils import checks, chat_formatting as cf
 
-
-default_volume = 25
+default_volume = 50
 
 
 class PlaySound:
@@ -62,6 +61,10 @@ class PlaySound:
             await asyncio.sleep(0.01)
         await self._leave_voice_channel(server)
 
+    async def wait_for_done(self, server: discord.Server):
+        while not self.audio_players[server.id].is_done():
+            await asyncio.sleep(0.01)
+		
     async def sound_init(self, ctx: commands.Context, path: str, vol: int):
         server = ctx.message.server
         options = "-filter \"volume=volume={}\"".format(str(vol/100))
@@ -82,18 +85,45 @@ class PlaySound:
         if not ctx.message.channel.is_private:
             if self.voice_connected(server):
                 if server.id not in self.audio_players:
-                    await self.sound_init(ctx, p, vol)
-                    self.audio_players[server.id].start()
-                    await self.wait_for_disconnect(server)
+                    voice_client = self.voice_client(server)
+                    if voice_client.audio_player.is_playing():
+                        voice_client.audio_player.pause()
+                        await self.sound_init(ctx, p, vol)
+                        self.audio_players[server.id].start()
+                        await self.wait_for_done(server)
+                        voice_client.audio_player.resume()
+                    else:
+                        await self.sound_init(ctx, p, vol)
+                        self.audio_players[server.id].start()
+                        await self.wait_for_disconnect(server)
                 else:
-                    if self.audio_players[server.id].is_playing():
-                        self.audio_players[server.id].stop()
-                    await self.sound_init(ctx, p, vol)
-                    self.audio_players[server.id].start()
-                    await self.wait_for_disconnect(server)
+                    voice_client = self.voice_client(server)
+                    if hasattr(voice_client, 'audio_player'):
+                        if not voice_client.audio_player.is_done() or voice_client.audio_player.is_playing():
+                            if voice_client.audio_player.is_playing():
+                                voice_client.audio_player.pause()
+                            if self.audio_players[server.id].is_playing():
+                                self.audio_players[server.id].stop()
+                            await self.sound_init(ctx, p, vol)
+                            self.audio_players[server.id].start()
+                            await self.wait_for_done(server)
+                            voice_client.audio_player.resume()
+                        else:	
+                            if self.audio_players[server.id].is_playing():
+                               self.audio_players[server.id].stop()
+                            await self.sound_init(ctx, p, vol)
+                            self.audio_players[server.id].start()
+                            await self.wait_for_disconnect(server)
+                    else:	
+                        if self.audio_players[server.id].is_playing():
+                           self.audio_players[server.id].stop()
+                        await self.sound_init(ctx, p, vol)
+                        self.audio_players[server.id].start()
+                        await self.wait_for_disconnect(server)
             else:
                 await self._join_voice_channel(ctx)
                 if server.id not in self.audio_players:
+                    #self.audio_players[server.id].stop()
                     await self.sound_init(ctx, p, vol)
                     self.audio_players[server.id].start()
                     await self.wait_for_disconnect(server)
@@ -104,6 +134,29 @@ class PlaySound:
                     self.audio_players[server.id].start()
                     await self.wait_for_disconnect(server)
 
+    @commands.command(no_pm=True, pass_context=True, name="stopsound")
+    async def _stopsound(self, ctx: commands.Context):
+        """Stops playing sound."""
+
+        server = ctx.message.server
+		
+        voice_client = self.voice_client(server)
+        if hasattr(voice_client, 'audio_player'):		
+            if not voice_client.audio_player.is_done() or voice_client.audio_player.is_playing():
+                if voice_client.audio_player.is_playing():
+                    voice_client.audio_player.pause()
+                if self.audio_players[server.id].is_playing():
+                    self.audio_players[server.id].stop()
+                voice_client.audio_player.resume()		
+            else:	
+                if self.audio_players[server.id].is_playing():
+                    self.audio_players[server.id].stop()
+                    await self.wait_for_disconnect(server)
+        else:	
+            if self.audio_players[server.id].is_playing():
+                self.audio_players[server.id].stop()
+                await self.wait_for_disconnect(server)
+					
     @commands.command(no_pm=True, pass_context=True, name="playsound")
     async def _playsound(self, ctx: commands.Context, soundname: str):
         """Plays the specified sound."""
